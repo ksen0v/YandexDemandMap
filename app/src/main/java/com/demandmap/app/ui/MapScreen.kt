@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -23,9 +25,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -69,7 +69,7 @@ import java.util.Locale
 /**
  * Map tab: full-bleed map, tap to query, locate-me FAB, a floating result
  * card at the bottom. Radius, taxi/courier and the widget all live on the
- * Settings tab now - this screen just shows what they resolve to.
+ * Settings tab now -- this screen just shows what they resolve to.
  */
 @Composable
 fun MapScreen(viewModel: DemandViewModel) {
@@ -232,20 +232,35 @@ fun MapScreen(viewModel: DemandViewModel) {
 
         // Custom zoom +/- - osmdroid's own built-in buttons (disabled above)
         // used to land bottom-center, right on top of the result card.
-        Surface(
+        // Two separate fixed-size circles, not a joined pill: nothing here
+        // asks for fillMaxWidth (that was the earlier bug - a default
+        // HorizontalDivider stretches full-width and drags its parents
+        // along with it if they're not otherwise size-constrained).
+        Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 20.dp),
-            color = AppPrimary,
-            shape = RoundedCornerShape(16.dp),
-            shadowElevation = 6.dp,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Column {
-                IconButton(onClick = { mapViewRef[0]?.controller?.zoomIn() }) {
+            Surface(
+                onClick = { mapViewRef[0]?.controller?.zoomIn() },
+                modifier = Modifier.size(48.dp),
+                shape = CircleShape,
+                color = AppPrimary,
+                shadowElevation = 6.dp,
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Add, contentDescription = "Приблизить", tint = MaterialTheme.colorScheme.onPrimary)
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
-                IconButton(onClick = { mapViewRef[0]?.controller?.zoomOut() }) {
+            }
+            Surface(
+                onClick = { mapViewRef[0]?.controller?.zoomOut() },
+                modifier = Modifier.size(48.dp),
+                shape = CircleShape,
+                color = AppPrimary,
+                shadowElevation = 6.dp,
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Remove, contentDescription = "Отдалить", tint = MaterialTheme.colorScheme.onPrimary)
                 }
             }
