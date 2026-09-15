@@ -17,14 +17,14 @@ private data class DemandCacheKey(
  * numbers dressed up as real ones.
  */
 class DemandRepository(private val real: SprosTaxiClient) {
-    private val cache = TtlCache<DemandCacheKey, Pair<List<DemandPoint>, String>>(ttlMillis = 20_000)
+    private val cache = TtlCache<DemandCacheKey, Pair<DemandPoint, String>>(ttlMillis = 20_000)
 
     suspend fun samplePoints(
         lat: Double,
         lon: Double,
         radiusM: Int,
         service: ServiceType,
-    ): Pair<List<DemandPoint>, String> {
+    ): Pair<DemandPoint, String> {
         val key = DemandCacheKey(round5(lat), round5(lon), radiusM, service)
         cache.get(key)?.let { return it }
 

@@ -11,13 +11,18 @@ import com.demandmap.app.domain.ServiceType
 object AppPreferences {
     private const val PREFS_NAME = "app_prefs"
     private const val KEY_SERVICE_TYPE = "service_type"
-    private const val KEY_RADIUS_M = "radius_m"
     private const val KEY_WIDGET_INTERVAL_SEC = "widget_interval_sec"
     private const val KEY_LAST_CENTER_LAT = "last_center_lat"
     private const val KEY_LAST_CENTER_LON = "last_center_lon"
     private const val KEY_LAST_ZOOM = "last_zoom"
 
-    const val DEFAULT_RADIUS_M = 500
+    /**
+     * Not user-adjustable (there used to be a Settings slider for this) -
+     * fixed at 500m so the zone stays one consistent, predictable size
+     * instead of a per-user setting. Not persisted since there's nothing
+     * to persist.
+     */
+    const val QUERY_RADIUS_M = 500
     const val DEFAULT_ZOOM = 13.0
 
     /**
@@ -41,12 +46,6 @@ object AppPreferences {
 
     fun setServiceType(context: Context, value: ServiceType) {
         prefs(context).edit().putString(KEY_SERVICE_TYPE, value.name).apply()
-    }
-
-    fun getRadiusM(context: Context): Int = prefs(context).getInt(KEY_RADIUS_M, DEFAULT_RADIUS_M)
-
-    fun setRadiusM(context: Context, radiusM: Int) {
-        prefs(context).edit().putInt(KEY_RADIUS_M, radiusM).apply()
     }
 
     fun getWidgetIntervalSec(context: Context): Int =

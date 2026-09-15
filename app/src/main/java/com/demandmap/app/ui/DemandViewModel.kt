@@ -9,7 +9,6 @@ import com.demandmap.app.domain.DemandPoint
 import com.demandmap.app.domain.GeoPointSimple
 import com.demandmap.app.domain.ServiceType
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,10 +18,9 @@ import kotlinx.coroutines.launch
 data class DemandUiState(
     val center: GeoPointSimple = GeoPointSimple(55.751244, 37.618423), // Moscow, just a default
     val zoom: Double = AppPreferences.DEFAULT_ZOOM,
-    val radiusM: Int = AppPreferences.DEFAULT_RADIUS_M,
+    val radiusM: Int = AppPreferences.QUERY_RADIUS_M,
     val service: ServiceType = ServiceType.TAXI,
     val tapped: GeoPointSimple? = null,
-    val points: List<DemandPoint> = emptyList(),
     val centerPoint: DemandPoint? = null,
     val source: String? = null,
     val loading: Boolean = false,
@@ -38,7 +36,6 @@ class DemandViewModel(application: Application) : AndroidViewModel(application) 
                 ?.let { (lat, lon) -> GeoPointSimple(lat, lon) }
                 ?: GeoPointSimple(55.751244, 37.618423),
             zoom = AppPreferences.getLastZoom(application),
-            radiusM = AppPreferences.getRadiusM(application),
             service = AppPreferences.getServiceType(application),
         ),
     )
@@ -63,16 +60,17 @@ class DemandViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun runQuery(lat: Double, lon: Double) {
         pendingJob?.cancel()
-        _state.update { it.copy(loading = true, error = null) }
+        // Clear the previous query's centerPoint right away, not just on
+        // success - otherwise, for the moment between a new tap and the new
+        // query resolving, the heatmap hexagon and its centered label
+        // (both driven by centerPoint) would keep showing the *old*
+        // location's stale value at the new tap's position.
+        _state.update { it.copy(loading = true, error = null, centerPoint = null) }
         pendingJob = viewModelScope.launch {
             val current = _state.value
             try {
-                val (points, source) = repository.samplePoints(lat, lon, current.radiusM, current.service)
-                // discGrid always includes the exact tapped point first, at
-                // distance 0 - that's "the coefficient here", as opposed to
-                // the hottest point somewhere else within the radius.
-                val center = points.minByOrNull { it.distanceM }
-                _state.update { it.copy(points = points, centerPoint = center, source = source, loading = false) }
+                val (point, source) = repository.samplePoints(lat, lon, current.radiusM, current.service)
+                _state.update { it.copy(centerPoint = point, source = source, loading = false) }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message ?: "Неизвестная ошибка") }
             }
@@ -109,18 +107,6 @@ class DemandViewModel(application: Application) : AndroidViewModel(application) 
         AppPreferences.setLastCenter(getApplication(), lat, lon)
         AppPreferences.setLastZoom(getApplication(), zoom)
         _state.update { it.copy(center = GeoPointSimple(lat, lon), zoom = zoom) }
-    }
-
-    /** Debounced: mirrors the web prototype not re-querying on every pixel of slider drag. */
-    fun onRadiusChanged(newRadius: Int) {
-        AppPreferences.setRadiusM(getApplication(), newRadius)
-        _state.update { it.copy(radiusM = newRadius) }
-        val tapped = _state.value.tapped ?: return
-        pendingJob?.cancel()
-        pendingJob = viewModelScope.launch {
-            delay(400)
-            runQuery(tapped.lat, tapped.lon)
-        }
     }
 
     fun onServiceChanged(newService: ServiceType) {

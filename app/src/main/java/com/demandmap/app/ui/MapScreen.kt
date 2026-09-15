@@ -92,16 +92,16 @@ fun MapScreen(viewModel: DemandViewModel) {
     var heatmapBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var locating by remember { mutableStateOf(false) }
 
-    // Recompute the hex-grid bitmap off the main thread whenever the query
-    // result or radius changes - cheap but no reason to do it inline during
+    // Recompute the hexagon bitmap off the main thread whenever the query
+    // result changes - cheap but no reason to do it inline during
     // composition/recomposition.
-    LaunchedEffect(state.points, state.tapped, state.radiusM) {
-        val tapped = state.tapped
-        heatmapBitmap = if (tapped == null || state.points.isEmpty()) {
+    LaunchedEffect(state.centerPoint, state.radiusM) {
+        val coefficient = state.centerPoint?.coefficient
+        heatmapBitmap = if (coefficient == null) {
             null
         } else {
             withContext(Dispatchers.Default) {
-                renderHeatmapBitmap(tapped.lat, tapped.lon, state.radiusM.toDouble(), state.points)
+                renderHeatmapBitmap(state.radiusM.toDouble(), coefficient)
             }
         }
     }
@@ -235,7 +235,9 @@ fun MapScreen(viewModel: DemandViewModel) {
                 heatmapOverlay.bitmap = heatmapBitmap
                 heatmapOverlay.centerGeo = state.tapped?.let { GeoPoint(it.lat, it.lon) }
                 heatmapOverlay.radiusM = state.radiusM.toDouble()
-                pointLabelsOverlay.points = state.points
+                pointLabelsOverlay.centerGeo = state.tapped?.let { GeoPoint(it.lat, it.lon) }
+                pointLabelsOverlay.radiusM = state.radiusM.toDouble()
+                pointLabelsOverlay.coefficient = state.centerPoint?.coefficient
                 mapView.invalidate()
             },
         )
@@ -393,7 +395,7 @@ fun MapScreen(viewModel: DemandViewModel) {
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "Источник: ${state.source ?: "—"} · ${state.points.size} точек",
+                                    "Источник: ${state.source ?: "—"}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = AppOnSurfaceMuted,
                                 )
