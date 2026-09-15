@@ -81,6 +81,10 @@ object LocationHelper {
         return fresh ?: bestCached
     }
 
+    // requestSingleUpdate(String, ...) is deprecated in favor of an API-30+
+    // overload (CancellationSignal/Executor) - not usable here since minSdk
+    // is 24, so the deprecated overload stays intentionally.
+    @Suppress("DEPRECATION")
     @SuppressLint("MissingPermission")
     private suspend fun requestBestFreshFix(locationManager: LocationManager, providers: List<String>): Location? {
         val results = Channel<Location>(Channel.UNLIMITED)

@@ -46,6 +46,21 @@ class DemandViewModel(application: Application) : AndroidViewModel(application) 
 
     private var pendingJob: Job? = null
 
+    // Guards the one-time GPS auto-recenter on cold start (see MapScreen's
+    // LaunchedEffect(Unit)) so it fires once per app session, not once per
+    // MapScreen composition - MapScreen is fully unmounted/remounted on
+    // every tab switch (AppRoot's `when` block), so a plain LaunchedEffect
+    // key alone re-triggers on every switch back to the Map tab. This
+    // ViewModel instance, by contrast, survives tab switches.
+    private var autoCenterAttempted = false
+
+    /** Returns true the first time it's called for this ViewModel instance, false after. */
+    fun tryConsumeAutoCenter(): Boolean {
+        if (autoCenterAttempted) return false
+        autoCenterAttempted = true
+        return true
+    }
+
     private fun runQuery(lat: Double, lon: Double) {
         pendingJob?.cancel()
         _state.update { it.copy(loading = true, error = null) }
@@ -79,6 +94,21 @@ class DemandViewModel(application: Application) : AndroidViewModel(application) 
     fun updateCenter(lat: Double, lon: Double) {
         AppPreferences.setLastCenter(getApplication(), lat, lon)
         _state.update { it.copy(center = GeoPointSimple(lat, lon)) }
+    }
+
+    /**
+     * Keeps camera position in sync with the live map, not just
+     * SharedPreferences - called (debounced) from MapScreen on every
+     * pan/zoom. Without this, state.center/state.zoom stay frozen at
+     * whatever they were when the ViewModel was constructed, so switching
+     * tabs and back (which unmounts/remounts MapScreen, re-reading these
+     * fields to recreate the native MapView) would snap back to that stale
+     * position instead of wherever the map actually was.
+     */
+    fun onCameraMoved(lat: Double, lon: Double, zoom: Double) {
+        AppPreferences.setLastCenter(getApplication(), lat, lon)
+        AppPreferences.setLastZoom(getApplication(), zoom)
+        _state.update { it.copy(center = GeoPointSimple(lat, lon), zoom = zoom) }
     }
 
     /** Debounced: mirrors the web prototype not re-querying on every pixel of slider drag. */

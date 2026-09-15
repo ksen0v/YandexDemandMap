@@ -41,12 +41,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.demandmap.app.data.AppPreferences
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.demandmap.app.data.LocationHelper
 import com.demandmap.app.domain.ServiceType
 import com.demandmap.app.ui.theme.AppOnSurfaceMuted
@@ -64,6 +63,8 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.util.Locale
 
 /**
@@ -79,13 +80,21 @@ fun MapScreen(viewModel: DemandViewModel) {
     val scope = rememberCoroutineScope()
 
     val mapViewRef = remember { arrayOfNulls<MapView>(1) }
+    // osmdroid's own "current position" dot/arrow overlay - GpsMyLocationProvider
+    // wraps plain LocationManager under the hood too, same as LocationHelper
+    // elsewhere in this app, so this still doesn't pull in Play Services.
+    // Distinct from the one-shot LocationHelper.getCurrentLocation() used by
+    // the locate-me FAB and auto-center below: this one keeps *updating* the
+    // marker on the map as you move, it doesn't just fetch once and stop.
+    val myLocationOverlayRef = remember { arrayOfNulls<MyLocationNewOverlay>(1) }
     val heatmapOverlay = remember { DemandHeatmapOverlay() }
+    val pointLabelsOverlay = remember { DemandPointLabelsOverlay() }
     var heatmapBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var locating by remember { mutableStateOf(false) }
 
-    // Recompute the gradient off the main thread whenever the query result
-    // or radius changes - cheap (96x96 px) but no reason to do it inline
-    // during composition/recomposition.
+    // Recompute the hex-grid bitmap off the main thread whenever the query
+    // result or radius changes - cheap but no reason to do it inline during
+    // composition/recomposition.
     LaunchedEffect(state.points, state.tapped, state.radiusM) {
         val tapped = state.tapped
         heatmapBitmap = if (tapped == null || state.points.isEmpty()) {
@@ -98,10 +107,14 @@ fun MapScreen(viewModel: DemandViewModel) {
     }
 
     // Opens on where you actually are (if permission's already granted)
-    // instead of always the persisted/default center - runs once per
-    // screen entry, doesn't touch "tapped" or trigger a query.
+    // instead of always the persisted/default center - guarded by the
+    // ViewModel (not just this LaunchedEffect's Unit key) so it fires once
+    // per app session, not once per tab switch: MapScreen is fully
+    // unmounted/remounted whenever AppRoot swaps tabs, which would
+    // otherwise re-run this and re-center on live GPS every time you come
+    // back to the Map tab. Doesn't touch "tapped" or trigger a query.
     LaunchedEffect(Unit) {
-        if (LocationHelper.hasPermission(context)) {
+        if (viewModel.tryConsumeAutoCenter() && LocationHelper.hasPermission(context)) {
             val location = LocationHelper.getCurrentLocation(context)
             if (location != null) {
                 mapViewRef[0]?.controller?.animateTo(GeoPoint(location.latitude, location.longitude))
@@ -131,6 +144,7 @@ fun MapScreen(viewModel: DemandViewModel) {
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
+            myLocationOverlayRef[0]?.enableMyLocation()
             locateMe()
         } else {
             Toast.makeText(context, "Нужно разрешение на геолокацию", Toast.LENGTH_SHORT).show()
@@ -144,22 +158,26 @@ fun MapScreen(viewModel: DemandViewModel) {
                 val mapView = MapView(ctx)
                 mapView.setTileSource(TileSourceFactory.MAPNIK)
                 mapView.setMultiTouchControls(true)
+                @Suppress("DEPRECATION") // osmdroid has no non-deprecated replacement for this toggle
                 mapView.setBuiltInZoomControls(false) // replaced by the custom column on the right
                 mapView.controller.setZoom(state.zoom)
                 mapView.controller.setCenter(GeoPoint(state.center.lat, state.center.lon))
 
                 // Remember wherever the map ends up - panning and
                 // pinch-zooming, not just taps - so the app reopens at the
-                // same place/scale instead of resetting each time.
-                // Debounced so a drag/pinch gesture doesn't write to
-                // SharedPreferences on every intermediate frame.
+                // same place/scale instead of resetting each time, *and*
+                // so switching tabs and back (which recreates this MapView
+                // from viewModel.state) picks up where you left off rather
+                // than a stale initial position. Debounced so a drag/pinch
+                // gesture doesn't write on every intermediate frame.
+                // Routed through the ViewModel (not a direct AppPreferences
+                // write) so state.center/state.zoom stay current too.
                 var persistCameraJob: Job? = null
                 fun schedulePersist() {
                     persistCameraJob?.cancel()
                     persistCameraJob = scope.launch {
                         delay(500)
-                        AppPreferences.setLastCenter(context, mapView.mapCenter.latitude, mapView.mapCenter.longitude)
-                        AppPreferences.setLastZoom(context, mapView.zoomLevelDouble)
+                        viewModel.onCameraMoved(mapView.mapCenter.latitude, mapView.mapCenter.longitude, mapView.zoomLevelDouble)
                     }
                 }
                 mapView.addMapListener(object : MapListener {
@@ -183,10 +201,32 @@ fun MapScreen(viewModel: DemandViewModel) {
 
                     override fun longPressHelper(p: GeoPoint?): Boolean = false
                 }
-                // Index 0 = tap handling, index 1 = the gradient overlay.
-                // Both left alone by the redraw logic below.
+                // Index 0 = tap handling, index 1 = the hex gradient overlay
+                // (both touched by the redraw logic below via their own
+                // vars); the my-location and point-label overlays are
+                // appended after, in draw order.
                 mapView.overlays.add(0, MapEventsOverlay(receiver))
                 mapView.overlays.add(1, heatmapOverlay)
+
+                // Added last (drawn on top of the gradient) so your own
+                // position is never hidden under the demand overlay.
+                val myLocationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(ctx), mapView)
+                // Same plain circle for both the "person" (stationary) and
+                // "direction" (once a bearing is known) states, so it never
+                // switches to osmdroid's default walking-person/arrow icons.
+                val locationDot = createLocationDotBitmap(ctx)
+                myLocationOverlay.setDirectionArrow(locationDot, locationDot)
+                myLocationOverlay.setPersonAnchor(0.5f, 0.5f)
+                myLocationOverlay.setDirectionAnchor(0.5f, 0.5f)
+                mapView.overlays.add(myLocationOverlay)
+                myLocationOverlayRef[0] = myLocationOverlay
+                if (LocationHelper.hasPermission(ctx)) {
+                    myLocationOverlay.enableMyLocation()
+                }
+
+                // Drawn last of all so per-point labels always sit on top,
+                // never hidden under the hex fill or the location marker.
+                mapView.overlays.add(pointLabelsOverlay)
 
                 mapView
             },
@@ -195,16 +235,27 @@ fun MapScreen(viewModel: DemandViewModel) {
                 heatmapOverlay.bitmap = heatmapBitmap
                 heatmapOverlay.centerGeo = state.tapped?.let { GeoPoint(it.lat, it.lon) }
                 heatmapOverlay.radiusM = state.radiusM.toDouble()
+                pointLabelsOverlay.points = state.points
                 mapView.invalidate()
             },
         )
 
         // osmdroid's MapView needs its lifecycle hooked up manually in a Compose host.
+        // The my-location overlay gets the same treatment - no point polling
+        // GPS to animate a dot on a screen that isn't visible.
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
-                    Lifecycle.Event.ON_RESUME -> mapViewRef[0]?.onResume()
-                    Lifecycle.Event.ON_PAUSE -> mapViewRef[0]?.onPause()
+                    Lifecycle.Event.ON_RESUME -> {
+                        mapViewRef[0]?.onResume()
+                        if (LocationHelper.hasPermission(context)) {
+                            myLocationOverlayRef[0]?.enableMyLocation()
+                        }
+                    }
+                    Lifecycle.Event.ON_PAUSE -> {
+                        mapViewRef[0]?.onPause()
+                        myLocationOverlayRef[0]?.disableMyLocation()
+                    }
                     else -> Unit
                 }
             }
