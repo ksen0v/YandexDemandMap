@@ -49,8 +49,10 @@ import com.demandmap.app.ui.theme.AppOnSurfaceMuted
 import com.demandmap.app.ui.theme.AppPrimary
 
 /**
- * Settings tab: radius, taxi/courier and the "widget over other apps"
- * controls (moved off the map screen so the map stays uncluttered).
+ * Settings tab: taxi/courier and the "widget over other apps" controls
+ * (moved off the map screen so the map stays uncluttered). Query radius
+ * used to be adjustable here too; it's now fixed at
+ * [AppPreferences.QUERY_RADIUS_M], no longer a per-user setting.
  */
 @Composable
 fun SettingsScreen(viewModel: DemandViewModel) {
@@ -151,22 +153,6 @@ fun SettingsScreen(viewModel: DemandViewModel) {
                         onClick = { viewModel.onServiceChanged(ServiceType.COURIER) },
                     )
                 }
-            }
-        }
-
-        item {
-            SettingsCard(title = "Радиус запроса") {
-                Text(
-                    "${state.radiusM} м",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = AppOnSurfaceMuted,
-                )
-                Slider(
-                    value = state.radiusM.toFloat(),
-                    onValueChange = { viewModel.onRadiusChanged(it.toInt()) },
-                    valueRange = 50f..5000f,
-                    colors = monoSliderColors(),
-                )
             }
         }
 

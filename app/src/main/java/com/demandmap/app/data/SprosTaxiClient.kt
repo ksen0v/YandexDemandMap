@@ -3,11 +3,7 @@ package com.demandmap.app.data
 import android.util.Log
 import com.demandmap.app.domain.DemandPoint
 import com.demandmap.app.domain.ServiceType
-import com.demandmap.app.domain.discGrid
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -174,36 +170,27 @@ class SprosTaxiClient(
     }
 
     /**
-     * The endpoint only takes a point, not a radius, so "radius" stays our
-     * own concept: probe a small grid of points around the tap (see
-     * [discGrid]) and call /surge/update once per point. Grid kept small
-     * out of courtesy to sprostaxi's server - the rate limiter paces
-     * requests regardless of grid size, but a smaller grid means a single
-     * tap resolves inside one rate-limit window instead of spilling into a
-     * second one.
+     * One request, straight at the tapped point - no surrounding grid.
+     * Earlier versions of this probed a grid of points around the tap (see
+     * the old [com.demandmap.app.domain.discGrid]) to interpolate a
+     * gradient across the query zone; that turned out to read as *less*
+     * trustworthy, not more - interpolating between sparse real samples
+     * could produce misleading artifacts (a false "cold" dip between two
+     * actually-hot points, if some other sample merely happened to be
+     * nearest). One real number, at the exact place you tapped, is more
+     * honest about what the app actually knows. [radiusM] is unused here
+     * now - kept in the signature since [DemandRepository] still uses it
+     * for cache-keying and the renderer still uses it for the hexagon's
+     * on-screen size, both independent of how the value was fetched.
+     *
+     * Throws on failure (see [fetchPoint]) rather than returning a nullable
+     * or empty result - the caller's existing catch block already turns
+     * that into a visible error, and a single-point query has no partial-
+     * success case to represent the way a multi-point grid used to.
      */
-    suspend fun samplePoints(lat: Double, lon: Double, radiusM: Int, service: ServiceType): List<DemandPoint> =
-        coroutineScope {
-            val divisions = if (radiusM <= 1000) 3 else 4
-            val grid = discGrid(lat, lon, radiusM, divisions)
-
-            val deferred = grid.map { gp ->
-                async {
-                    try {
-                        val payload = fetchPoint(gp.lat, gp.lon)
-                        val (coeff, bonus) = bestTariffForService(payload, service)
-                        DemandPoint(gp.lat, gp.lon, coeff, bonus, gp.distanceM)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "point fetch failed for (${gp.lat}, ${gp.lon}): ${e.message}")
-                        null
-                    }
-                }
-            }
-
-            val points = deferred.awaitAll().filterNotNull()
-            if (points.isEmpty()) {
-                throw IOException("sprostaxi /surge/update returned no usable points for this query")
-            }
-            points
-        }
+    suspend fun samplePoints(lat: Double, lon: Double, @Suppress("UNUSED_PARAMETER") radiusM: Int, service: ServiceType): DemandPoint {
+        val payload = fetchPoint(lat, lon)
+        val (coeff, bonus) = bestTariffForService(payload, service)
+        return DemandPoint(lat, lon, coeff, bonus, 0.0)
+    }
 }

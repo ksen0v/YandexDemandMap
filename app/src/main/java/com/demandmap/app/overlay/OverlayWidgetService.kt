@@ -248,15 +248,10 @@ class OverlayWidgetService : Service() {
 
         val service = AppPreferences.getServiceType(this)
         try {
-            val (points, _) = AppServices.repository(this).samplePoints(
+            val (point, _) = AppServices.repository(this).samplePoints(
                 location.latitude, location.longitude, WIDGET_QUERY_RADIUS_M, service,
             )
-            val center = points.minByOrNull { it.distanceM }
-            if (center != null) {
-                showSuccess("x${String.format(Locale.US, "%.2f", center.coefficient)}")
-            } else {
-                showError()
-            }
+            showSuccess("x${String.format(Locale.US, "%.2f", point.coefficient)}")
         } catch (e: Exception) {
             showError()
         }
